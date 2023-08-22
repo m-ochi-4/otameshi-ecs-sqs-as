@@ -1,0 +1,70 @@
+
+2023-08-21 ap-northeast-1
+
+
+EC2
+
+c7g.medium
+1 vCPU, 2 GB Memory
+ondemand: $0.0455/h = $33.215/month
+spot: $0.0183/h = $13.39/month
+
+t4g.nano
+2 vCPU, 0.5 GB Memory
+ondemand: $0.0042/h = $3.066/month
+spot: $0.0023/h = $1.679/month
+
+EBS
+gp3
+30 GB, 3000 IOPS, 125 throughput
+$0.096/GB/month * 30 GB = $2.88/month = $0.00395/h ($2.88/month * 12 month / 365 days / 24 hour = 0.00394520547945205479452054794521)
+
+c7g.medium ondemand + EBS = $33.215/month + $2.88/month = $36.095/month
+c7g.medium spot + EBS = $13.39/month + $2.88/month = $16.27/month
+t4g.nano ondemand + EBS = $3.066/month + $2.88/month = $5.946/month
+t4g.nano spot + EBS = $1.679/month + $2.88/month = $4.559/month
+
+
+Fargete
+
+1 vCPU, 1 GB Memory
+ondemand (ARM): $0.04045/h + $0.00442/h = $0.04487/h = $32.7551/month
+spot (x86_64): $0.015168/h + $0.001659/h = $0.016827/h = $12.28371/month
+
+.25 vCPU, .5 GB Memory
+ondemand (ARM): $0.04045/h * 0.25 + $0.00442/h * 0.5 = $0.0101125/h + $0.00221/h = $0.0123225/h = $8.995425/month
+spot (x86_64): $0.015168/h * 0.25 + $0.001659/h * 0.5 = $0.003792/h + $0.0008295/h = $0.0046215/h = $3.373695/month
+
+1 vCPU, 2 GB Memory (c medium 相当)
+ondemand (ARM): $0.04045/h + $0.00442/h * 2 = $0.04045/h + $0.00884/h = $0.04929/h = $35.9817/month
+spot (x86_64): $0.015168/h + $0.001659/h * 2 = $0.015168/h + $0.003318/h = $0.018486/h = $13.49478/month
+
+
+Auto Scaling overhead
+
+# EventBridge Scheduler
+$1.251/M calling
+1min/calling = 43800 calling/month = $0.0547938/month
+
+# CloudWatch Metrics
+1 custom metrics = $0.30/month
+
+$0.01/1000 PutMetricData requests
+1min/requests = 43800 requests/month = $0.438/month (worst case)
+
+# CloudWatch Alarm
+$0.10/alarm/month
+2 alarms = $0.20/month
+
+# Lambda ARM
+$0.20/M requests
+1min/requests = 43800 requests/month = $0.00876/month
+
+$0.0000133334/GB-Sec
+= $0.00000333335/.25GB-Sec
+= $0.000001000005/.25GB-300msec
+
+$0.000001000005 * 43800 requests/month = $0.043800219/month
+
+total
+0.0547938 + 0.30 + 0.438 + 0.20 + 0.00876 + 0.043800219 = $1.045354019/month + Logs のコスト

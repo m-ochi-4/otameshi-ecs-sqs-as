@@ -1,0 +1,285 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Parameters:
+
+  # TaskDefinition
+
+  ECSTaskDefinitionFamily:
+    Type: String
+
+  RoleName:
+    Type: String
+
+  ECRImageName:
+    Type: String
+
+  ECRImageTag:
+    Type: String
+
+  DynamoDBTableName:
+    Type: String
+
+  SQSQueueName:
+    Type: String
+
+  # Cluster
+
+  ECSClusterName:
+    Type: String
+
+  ECSClusterServiceConnectNamespace:
+    Type: String
+
+  # Service
+
+  ECSServiceName:
+    Type: String
+
+  SubnetIds:
+    Type: CommaDelimitedList
+
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+
+
+Resources:
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+
+      # タスク定義の設定
+      Family: !Ref ECSTaskDefinitionFamily
+
+      # インフラストラクチャの要件
+      ## 起動タイプ
+      RequiresCompatibilities:
+        - FARGATE
+
+      ## OS、アーキテクチャ、ネットワークモード
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: X86_64
+      NetworkMode: awsvpc
+      Cpu: 256
+      Memory: 512
+
+      ## 条件付きのタスクロール
+      TaskRoleArn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ecsTaskRole-${RoleName}-${AWS::Region}
+      ExecutionRoleArn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ecsTaskExecutionRole-${RoleName}-${AWS::Region}
+
+      # コンテナ
+      ContainerDefinitions:
+        -
+          ## コンテナの詳細
+          Name: !Ref ECRImageName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRImageName}:${ECRImageTag}
+          Essential: true
+          #RepositoryCredentials:
+          #  CredentialsParameter:
+
+          ## ポートマッピング
+          #PortMappings:
+          #  -
+          #    ContainerPort:
+          #    Protocol: tcp
+          #    Name:
+          #    AppProtocol: http
+
+          ## 読み取り専用ルートファイルシステム
+          ReadonlyRootFilesystem: true
+
+          ## リソース割り当て制限 - (条件付き)
+          #Cpu:
+          #ResourceRequirements:
+          #  -
+          #    Type: GPU
+          #    Value:
+          #Memory:  # hard limit
+          #MemoryReservation:  # soft limit
+
+          ## 環境変数
+          Environment:
+            -
+              Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            -
+              Name: DYNAMODB_TABLE_NAME
+              Value: !Ref DynamoDBTableName
+            -
+              Name: SQS_QUEUE_URL
+              Value: !Sub https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/${SQSQueueName}
+
+          #EnvironmentFiles:
+          #  -
+          #    Type: s3
+          #    Value:
+
+          ## ログ記録
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Sub /ecs/${ECSTaskDefinitionFamily}/${ECRImageName}
+              awslogs-stream-prefix: ecs
+            #SecretOptions:
+            #  -
+            #    Name:
+            #    ValueFrom:
+
+          ## HealthCheck
+          #HealthCheck:
+          #  Command: [  ]
+          #  Interval: 30
+          #  Timeout: 5
+          #  StartPeriod:
+          #  Retries: 3
+
+          ## コンテナタイムアウト
+          #STartTimeout:
+          #StopTimeout:
+
+          ## Docker 設定
+          #EntryPoint: [  ]
+          #Command: [  ]
+          #WorkingDirectory:
+
+          ## リソース制限
+          #Ulimits:
+          #  -
+          #    Name:
+          #    SoftLimit:
+          #    HardLimit:
+
+          ## Docker ラベル
+          #DockerLabels:
+          #  Key: Value
+
+      # ストレージ
+      #EphemeralStorage:
+      #  SizeInGiB: 21
+      #Volumes:
+
+      # モニタリング
+
+      # タグ
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+
+      # クラスター設定
+      ClusterName: !Ref ECSClusterName
+      DefaultCapacityProviderStrategy:
+        -
+          CapacityProvider: FARGATE_SPOT
+          Base: 0
+          Weight: 1
+
+      # ネットワーキング
+      ServiceConnectDefaults:
+        Namespace: !Ref ECSClusterServiceConnectNamespace
+
+      # インフラストラクチャ
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+
+      # モニタリング
+      ClusterSettings:
+        -
+          Name: containerInsights
+          Value: disabled
+
+      # Logging
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+          #KmsKeyId:
+          #LogConfiguration:
+          #  S3BucketName:
+          #  S3KeyPrefix:
+          #  S3EncryptionEnabled: true
+          #  CloudWatchLogGroupName:
+          #  CloudWatchEncryptionEnabled: true
+
+      # タグ
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+
+      # 環境
+      Cluster: !Ref Cluster
+      CapacityProviderStrategy:
+        -
+          CapacityProvider: FARGATE_SPOT
+          Base: 0
+          Weight: 1
+      #LaunchType:
+      PlatformVersion: LATEST
+
+      # デプロイ設定
+      TaskDefinition: !Ref TaskDefinition
+      ServiceName: !Ref ECSServiceName
+      SchedulingStrategy: REPLICA
+      DesiredCount: 0
+
+      ## デプロイオプション/デプロイ不具合の検出
+      DeploymentController:
+        Type: ECS
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        #Alarms:
+        #  Enable: true
+        #  AlarmNames:
+        #       - ""
+        #  Rollback: true
+
+      # Service Connect
+      ServiceConnectConfiguration:
+        Enabled: false
+        #Namespace:
+        #Services: -> 公開ポートなし
+        #LogConfiguration:
+        #  LogDriver:
+        #  Options:
+        #  SecretOptions:
+        #    -
+        #      Name:
+        #      ValueFrom:
+
+      # ネットワーキング -> awsvpc モードの場合設定
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets: !Ref SubnetIds
+          SecurityGroups: !Ref SecurityGroupIds
+          AssignPublicIp: ENABLED
+
+      # ロードバランシング
+      #LoadBalancers: -> 公開ポートなし
+
+      # サービスの Auto Scaling -> ApplicationAutoScaling
+
+      # タグ
+      EnableECSManagedTags: true
+      PropagateTags: TASK_DEFINITION
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:

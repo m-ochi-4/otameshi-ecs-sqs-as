@@ -1,0 +1,269 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Transform:
+  - AWS::Serverless-2016-10-31
+
+
+Parameters:
+
+  SQSQueueName:
+    Type: String
+
+  ECSClusterName:
+    Type: String
+
+  ECSServiceName:
+    Type: String
+
+  MinCapacity:
+    Type: String
+
+  MaxCapacity:
+    Type: String
+
+  ExpectedMsgCapacityPerTask:
+    Type: String
+
+
+Resources:
+
+  ScalableTargetECS:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub service/${ECSClusterName}/${ECSServiceName}
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 0
+      MaxCapacity: 0
+
+  ScalingPolicyStepHigh:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      ScalingTargetId: !Ref ScalableTargetECS
+      PolicyName: step-high
+      PolicyType: StepScaling
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ChangeInCapacity
+        StepAdjustments:
+          -
+            MetricIntervalLowerBound: 0
+            ScalingAdjustment: 1
+        Cooldown: 60
+        MetricAggregationType: Average
+
+  ScalingPolicyStepLow:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      ScalingTargetId: !Ref ScalableTargetECS
+      PolicyName: step-low
+      PolicyType: StepScaling
+      StepScalingPolicyConfiguration:
+        AdjustmentType: ChangeInCapacity
+        StepAdjustments:
+          -
+            MetricIntervalUpperBound: 0
+            ScalingAdjustment: -1
+        Cooldown: 60
+        MetricAggregationType: Average
+
+  AlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+
+      Namespace: CustomMetricsForAutoScaling/ECS/Task
+      MetricName: Backlog
+      Dimensions:
+        -
+          Name: ClusterName
+          Value: !Ref ECSClusterName
+        -
+          Name: ServiceName
+          Value: !Ref ECSServiceName
+      Statistic: Average
+      Period: 60
+
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: !Ref ExpectedMsgCapacityPerTask
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+
+      AlarmActions:
+        - !Ref ScalingPolicyStepHigh
+
+      AlarmName: !Sub StepScaling-service/${ECSClusterName}/${ECSServiceName}-AlarmHigh
+
+  AlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+
+      Namespace: CustomMetricsForAutoScaling/ECS/Task
+      MetricName: Backlog
+      Dimensions:
+        -
+          Name: ClusterName
+          Value: !Ref ECSClusterName
+        -
+          Name: ServiceName
+          Value: !Ref ECSServiceName
+      Statistic: Average
+      Period: 60
+
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Threshold: !Sub -${ExpectedMsgCapacityPerTask}
+      EvaluationPeriods: 1
+      DatapointsToAlarm: 1
+      TreatMissingData: notBreaching
+
+      AlarmActions:
+        - !Ref ScalingPolicyStepLow
+
+      AlarmName: !Sub StepScaling-service/${ECSClusterName}/${ECSServiceName}-AlarmLow
+
+
+  RoleFunctionCalcBacklog:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action:
+              - sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        -
+          PolicyName: inline
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              # lambda basic execution policy
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:*
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*
+              # function specific
+              -
+                Effect: Allow
+                Action:
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:${SQSQueueName}
+              -
+                Effect: Allow
+                Action:
+                  - ecs:DescribeServices
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:service/${ECSClusterName}/${ECSServiceName}
+              -
+                Effect: Allow
+                Action:
+                  - application-autoscaling:RegisterScalableTarget
+                Resource:
+                  - !Sub arn:${AWS::Partition}:application-autoscaling:${AWS::Region}:${AWS::AccountId}:scalable-target/*
+                Condition:
+                  StringEquals:
+                    application-autoscaling:scalable-dimension: !Select [ 1, !Split [ "|", !Ref ScalableTargetECS ] ]
+                    application-autoscaling:service-namespace: !Select [ 2, !Split [ "|", !Ref ScalableTargetECS ] ]
+              -
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource:
+                  - "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: CustomMetricsForAutoScaling/ECS/Task
+              # eventbridge scheduler
+              -
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:*
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:*:*
+
+  FunctionCalcBacklog:
+    Type: AWS::Serverless::Function
+    Properties:
+
+      CodeUri: ./calc_backlog_sqs_ecs.py
+
+      Runtime: python3.11
+      Handler: calc_backlog_sqs_ecs.lambda_handler
+      Architectures:
+        - arm64
+
+      MemorySize: 256
+      Timeout: 30
+
+      Role: !GetAtt RoleFunctionCalcBacklog.Arn
+
+      Environment:
+        Variables:
+          SQS_QUEUE_URL: !Sub https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/${SQSQueueName}
+          ECS_CLUSTER_NAME: !Ref ECSClusterName
+          ECS_SERVICE_NAME: !Ref ECSServiceName
+          MAX_CAPACITY: !Ref MinCapacity
+          MIN_CAPACITY: !Ref MaxCapacity
+          EXPECTED_MSG_CAPACITY_PER_TASK: !Ref ExpectedMsgCapacityPerTask
+
+      AutoPublishAlias: prod
+      AutoPublishAliasAllProperties: false
+
+      DeploymentPreference:
+        Enabled: true
+        Type: AllAtOnce
+
+      ReservedConcurrentExecutions: 1
+
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+
+      Events:
+        EventSchedule:
+          Type: ScheduleV2
+          Properties:
+            State: ENABLED
+
+            OmitName: true
+            GroupName: default
+
+            ScheduleExpression: cron(* * * * ? *)
+            FlexibleTimeWindow:
+              Mode: "OFF"
+
+            ScheduleExpressionTimezone: UTC
+
+            RetryPolicy:
+              MaximumEventAgeInSeconds: 60
+              MaximumRetryAttempts: 0
+
+            RoleArn: !GetAtt RoleFunctionCalcBacklog.Arn
+
+      Tags:
+        Name: !Sub calc-backlog-sqs-ecs-${ECSClusterName}-${ECSServiceName}

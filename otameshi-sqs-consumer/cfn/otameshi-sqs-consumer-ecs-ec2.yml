@@ -1,0 +1,625 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+
+
+Parameters:
+
+  # LaunchTemplate
+
+  LatestECSOptimizedAmi:
+    # https://docs.aws.amazon.com/ja_jp/AmazonECS/latest/developerguide/retrieve-ecs-optimized_AMI.html
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
+
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+
+  # ASG
+
+  SubnetIds:
+    Type: CommaDelimitedList
+
+  # TaskDefinition
+
+  ECSTaskDefinitionFamily:
+    Type: String
+
+  RoleName:
+    Type: String
+
+  ECRImageName:
+    Type: String
+
+  ECRImageTag:
+    Type: String
+
+  DynamoDBTableName:
+    Type: String
+
+  SQSQueueName:
+    Type: String
+
+  # Cluster
+
+  ECSClusterName:
+    Type: String
+
+  ECSClusterServiceConnectNamespace:
+    Type: String
+
+  # Service
+
+  ECSServiceName:
+    Type: String
+
+
+Resources:
+
+  ECSLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+
+      # 起動テンプレート名と説明
+      #LaunchTemplateName:
+      #VersionDescription:
+      ## テンプレートタグ
+      #TagSpecifications:
+      #  -
+      #    ResourceType: launch-template
+      #    Tags:
+      #      -
+      #        Key:
+      #        Value:
+
+      # 起動テンプレートのコンテンツ
+      LaunchTemplateData:
+
+        # アプリケーションおよび OS イメージ (Amazon マシンイメージ)
+        ImageId: !Ref LatestECSOptimizedAmi
+
+        # インスタンスタイプ -> ASG 起動テンプレートの設定に含めない
+        ## インスタンスタイプを手動選択
+        #InstanceType:
+        ## インスタンスタイプの属性を指定
+        #InstanceRequirements:
+          ## 多すぎるので下記参考
+          ## <https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-launchtemplate-instancerequirements.html>
+
+        # キーペア -> ASG 起動テンプレートの設定に含めない
+        #KeyName:
+
+        # ネットワーク設定  -> ASG 起動テンプレートの設定に含めない
+        SecurityGroupIds: !Ref SecurityGroupIds  # other VPC
+        #SecurityGroups:  # for default VPC
+        #  - ""
+        #NetworkInterfaces:
+        #  -
+        #    DeviceIndex: 0
+        #    NetworkInterfaceId:  # ASG 設定非推奨
+        #    Description:
+        #    SubnetId:  # ASG 非適用
+        #    Groups:  # Security Group
+        #      - ""
+        #    AssociatePublicIpAddress:
+        #    PrivateIpAddress:  # ASG 非適用
+        #    PrivateIpAddresses:
+        #      -
+        #        PrivateIpAddress:
+        #        Primary:
+        #    SecondaryPrivateIpAddressCount: 0
+        #    Ipv6Addresses:  # ASG 非適用
+        #      -
+        #        Ipv6Address:
+        #    Ipv6AddressCount: 0
+        #    Ipv4Prefixes:  # ASG 非適用
+        #      -
+        #        Ipv4Prefix:
+        #    Ipv4PrefixCount: 0
+        #    Ipv6Prefixes:  # ASG 非適用
+        #      -
+        #        Ipv6Prefix:
+        #    Ipv6PrefixCount: 0
+        #    DeleteOnTermination:
+        #    InterfaceType: interface  # interface | efa
+        #    NetworkCardIndex: 0
+
+        # ストレージ (ボリューム) -> AMI ベースイメージのそれで十分なら空にする
+        #BlockDeviceMappings:
+        #  -
+        #    DeviceName:
+        #    VirtualName:
+        #    NoDevice:
+        #    Ebs:
+        #      SnapshotId:
+        #      VolumeSize:
+        #      VolumeType: gp3
+        #      Iops: 3000
+        #      DeleteOnTermination: true
+        #      Encrypted: true
+        #      KmsKeyId: aws/ebs
+        #      Throughput: 125
+
+        # リソースタグ
+        #TagSpecifications:
+        #  -
+        #    ResourceType:  # instance | volume | elastic-gpu | network-interface | spot-instances-request
+        #    Tags:
+        #      -
+        #        Key:
+        #        Value:
+
+        # 高度な詳細 -> ASG 起動テンプレートの設定に含めない (ただしインスタンスプロファイルとユーザーデータは ECS 用に設定)
+        #InstanceMarketOptions:
+        #  MarketType: spot
+        #  SpotOptions:
+        #    MaxPrice:
+        #    SpotInstanceType: one-time  # one-time | persistent
+        #    ValidUntil:
+        #    InstanceInterruptionBehavior: terminate  # hibernate | stop | terminate
+        IamInstanceProfile:
+          #Name:
+          Arn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:instance-profile/ecsInstanceRole-${RoleName}-${AWS::Region}
+        #PrivateDnsNameOptions:
+        #  HostnameType: ip-name  # ip-name | resource-name
+        #  EnableResourceNameDnsARecord: false
+        #  EnableResourceNameDnsAAAARecord: false
+        #MaintenanceOptions:
+        #  AutoRecovery: default  # default | disabled
+        #InstanceInitiatedShutdownBehavior: stop  # stop | terminate
+        #HibernationOptions:
+        #  Configured: false
+        #DisableApiTermination: false
+        #DisableApiStop: false
+        #Monitoring:
+        #  Enabled: false
+        #ElasticGpuSpecifications:
+        #  -
+        #    Type: eg1.
+        #ElasticInferenceAccelerators:  # 廃止
+        #  -
+        #    Count: 1
+        #    Type: eia1
+        CreditSpecification:
+          CpuCredits: standard # standard | unlimited
+        #Placement:
+        #  Tenancy: default  # default | dedicated | host
+        EbsOptimized: true
+        #CapacityReservationSpecification:
+        #  CapacityReservationPreference:  # none | open
+        #  CapacityReservationTarget:
+        #    CapacityReservationId:
+        #    CapacityReservationResourceGroupArn:
+        #RamDiskId:  # 代わりに PV-GRUB を推奨
+        #KernelId:
+        #EnclaveOptions:
+        #  Enabled: false
+        #LicenseSpecifications:
+        #  -
+        #    LicenseConfigurationArn:
+        #CpuOptions:
+        #  CoreCount:
+        #  ThreadsPerCore:
+        #  AmdSevSnp:  # disabled | enabled
+        MetadataOptions:
+        #  HttpEndpoint: enabled  # disabled | enabled
+        #  HttpProtocolIpv6: disabled  # disabled | enabled
+          HttpTokens: required  # optional | required (IMDSv2)
+        #  HttpPutResponseHopLimit: 1
+        #  InstanceMetadataTags: disabled  # disabled | enabled
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            cat <<'EOF' >> /etc/ecs/ecs.config
+            ECS_CLUSTER=${ECSClusterName}
+            ECS_ENABLE_SPOT_INSTANCE_DRAINING=true
+            EOF
+
+  ECSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+
+      # 詳細
+
+      ## グループ
+      #AutoScalingGroupName:
+      DesiredCapacity: 0
+      MinSize: 0
+      MaxSize: 5
+
+      ## 起動テンプレート
+      ## MixedInstancesPolicy で設定する場合省略可
+      #InstanceId:  # 起動構成ベース
+      #LaunchConfigurationName:  # 起動設定 2024-04-01 より利用不可　非推奨
+      #LaunchTemplate:
+      #  LaunchTemplateName:
+      #  LaunchTemplateId: !Ref ECSLaunchTemplate
+      #  Version: !GetAtt ECSLaunchTemplate.LatestVersionNumber
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            #LaunchTemplateName:
+            LaunchTemplateId: !Ref ECSLaunchTemplate
+            Version: !GetAtt ECSLaunchTemplate.LatestVersionNumber
+      ## インスタンスタイプの要件
+          Overrides:
+            -
+              #InstanceType: c7g.medium
+              InstanceType: t4g.nano
+              WeightedCapacity: 1
+              #InstanceRequirements:  # https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/aws-properties-autoscaling-autoscalinggroup-instancerequirements.html
+              #LaunchTemplateSpecification:
+              #  LaunchTemplateName
+              #  LaunchTemplateId
+              #  Version
+      ## インスタンス購入オプション
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0
+          OnDemandBaseCapacity: 0
+      ## 配分戦略
+          OnDemandAllocationStrategy: lowest-price  # prioritized | lowest-price
+          SpotAllocationStrategy: price-capacity-optimized  # capacity-optimized | capacity-optimized-prioritized | owest-price | price-capacity-optimized
+          #SpotInstancePools: 2  # OnDemandAllocationStrategy == lowest-price
+          SpotMaxPrice: ""
+      CapacityRebalance: true
+
+      ## ネットワーク
+      #AvailabilityZones:  # for default VPC
+      #  - ""
+      VPCZoneIdentifier: !Ref SubnetIds
+
+      ## ロードバランシング
+      #TargetGroupARNs:  # for ALB/NLB/GWLB
+      #  - ""
+      #LoadBalancerNames:  # for CLB
+      #  - ""
+
+      ## ヘルスチェック
+      HealthCheckType: EC2  # EC2,ELB,VPC_LATTICE
+      HealthCheckGracePeriod: 300
+
+      ## 高度な設定
+      NewInstancesProtectedFromScaleIn: false
+      #PlacementGroup:
+      TerminationPolicies:
+        - Default
+
+      #MaxInstanceLifetime:
+      #Cooldown: 300  # for simple scaling policies
+      #ServiceLinkedRoleARN:
+      #DefaultInstanceWarmup:
+
+      ## タグ
+      Tags:
+        -
+          Key: Name
+          Value: !Sub ECS Instance - ${ECSClusterName}
+          PropagateAtLaunch: true
+
+      # アクティビティ
+
+      ## アクティビティ通知
+      #NotificationConfigurations:
+      #  -
+      #    TopicARN:
+      #    NotificationTypes:
+      #      - autoscaling:EC2_INSTANCE_LAUNCH
+      #      - autoscaling:EC2_INSTANCE_TERMINATE
+      #      - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+      #      - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+      #      - autoscaling:TEST_NOTIFICATION
+
+      # オートスケーリング -> AWS::AutoScaling::ScalingPolicy, AWS::AutoScaling::ScheduledAction
+
+      # インスタンスの管理
+
+      ## ライフサイクルフック -> AWS::AutoScaling::LifecycleHook
+      #LifecycleHookSpecificationList:
+      #  -
+      #    LifecycleHookName:
+      #    LifecycleTransition:
+
+      ## フォームプール -> AWS::AutoScaling::WarmPool
+
+      # モニタリング
+
+      ## CloudWatch モニタリングの詳細
+      #MetricsCollection:
+      #  -
+      #    Granularity: 1Minute
+      #    Metrics:  # If you specify Granularity and don't specify any metrics, all metrics are enabled.
+      #      # https://docs.aws.amazon.com/ja_jp/AWSCloudFormation/latest/UserGuide/aws-properties-as-metricscollection.html
+      #      - ""
+
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+
+      # タスク定義の設定
+      Family: !Ref ECSTaskDefinitionFamily
+
+      # インフラストラクチャの要件
+      ## 起動タイプ
+      RequiresCompatibilities:
+        - EC2
+
+      ## OS、アーキテクチャ、ネットワークモード
+      RuntimePlatform:
+        OperatingSystemFamily: LINUX
+        CpuArchitecture: ARM64
+      NetworkMode: bridge
+      #Cpu:  # option if data plane is EC2
+      #Memory:
+
+      ## 条件付きのタスクロール
+      TaskRoleArn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ecsTaskRole-${RoleName}-${AWS::Region}
+      ExecutionRoleArn: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/ecsTaskExecutionRole-${RoleName}-${AWS::Region}
+
+      # コンテナ
+      ContainerDefinitions:
+        -
+          ## コンテナの詳細
+          Name: !Ref ECRImageName
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRImageName}:${ECRImageTag}
+          Essential: true
+          #RepositoryCredentials:
+          #  CredentialsParameter:
+
+          ## ポートマッピング
+          #PortMappings:
+          #  -
+          #    ContainerPort:
+          #    Protocol: tcp
+          #    Name:
+          #    AppProtocol: http
+
+          ## 読み取り専用ルートファイルシステム
+          ReadonlyRootFilesystem: true
+
+          ## リソース割り当て制限 - (条件付き)
+          #Cpu:
+          #ResourceRequirements:
+          #  -
+          #    Type: GPU
+          #    Value:
+          #Memory:  # hard limit
+          MemoryReservation: 384  # soft limit
+
+          ## 環境変数
+          Environment:
+            -
+              Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            -
+              Name: DYNAMODB_TABLE_NAME
+              Value: !Ref DynamoDBTableName
+            -
+              Name: SQS_QUEUE_URL
+              Value: !Sub https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/${SQSQueueName}
+
+          #EnvironmentFiles:
+          #  -
+          #    Type: s3
+          #    Value:
+
+          ## ログ記録
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Sub /ecs/${ECSTaskDefinitionFamily}/${ECRImageName}
+              awslogs-stream-prefix: ecs
+            #SecretOptions:
+            #  -
+            #    Name:
+            #    ValueFrom:
+
+          ## HealthCheck
+          #HealthCheck:
+          #  Command: [  ]
+          #  Interval: 30
+          #  Timeout: 5
+          #  StartPeriod:
+          #  Retries: 3
+
+          ## コンテナタイムアウト
+          #STartTimeout:
+          #StopTimeout:
+
+          ## コンテナネットワーク設定
+          #DisableNetworking: false
+          #DnsServers:
+          #  - ""
+          #DnsSearchDomains:
+          #  - ""
+          #Hostname:
+
+          ## Docker 設定
+          #EntryPoint: [  ]
+          #Command: [  ]
+          #WorkingDirectory:
+
+          ## リソース制限
+          #Ulimits:
+          #  -
+          #    Name:
+          #    SoftLimit:
+          #    HardLimit:
+
+          ## Docker ラベル
+          #DockerLabels:
+          #  Key: Value
+
+      # ストレージ
+      #EphemeralStorage:
+      #  SizeInGiB: 21
+      #Volumes:
+
+      # モニタリング
+
+      # タグ
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+
+      # クラスター設定
+      ClusterName: !Ref ECSClusterName
+      #DefaultCapacityProviderStrategy:
+      #  -
+      #    CapacityProvider: FARGATE_SPOT
+      #    Base: 0
+      #    Weight: 1
+
+      # ネットワーキング
+      ServiceConnectDefaults:
+        Namespace: !Ref ECSClusterServiceConnectNamespace
+
+      # インフラストラクチャ -> AWS::ECS::ClusterCapacityProviderAssociations
+      #CapacityProviders:
+      #  - FARGATE
+      #  - FARGATE_SPOT
+
+      # モニタリング
+      ClusterSettings:
+        -
+          Name: containerInsights
+          Value: disabled
+
+      # Logging
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+          #KmsKeyId:
+          #LogConfiguration:
+          #  S3BucketName:
+          #  S3KeyPrefix:
+          #  S3EncryptionEnabled: true
+          #  CloudWatchLogGroupName:
+          #  CloudWatchEncryptionEnabled: true
+
+      # タグ
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:
+
+
+  ASGCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      #Name:
+      AutoScalingGroupProvider:
+        AutoScalingGroupArn: !Ref ECSAutoScalingGroup
+        ManagedScaling:
+          Status: ENABLED  # DISABLED | ENABLED
+          TargetCapacity: 100
+          MinimumScalingStepSize: 1
+          MaximumScalingStepSize: 10000
+          InstanceWarmupPeriod: 300
+        ManagedTerminationProtection: DISABLED  # DISABLED | ENABLED
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:
+
+  ClusterCPAssociation:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !Ref Cluster
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+        - !Ref ASGCapacityProvider
+      DefaultCapacityProviderStrategy:
+        -
+          CapacityProvider: !Ref ASGCapacityProvider
+          Base: 0
+          Weight: 1
+
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+
+      # 環境
+      Cluster: !Ref Cluster
+      CapacityProviderStrategy:
+        -
+          CapacityProvider: !Ref ASGCapacityProvider
+          Base: 0
+          Weight: 1
+      #LaunchType:
+      #PlatformVersion: LATEST  # for Fargate
+
+      # デプロイ設定
+      TaskDefinition: !Ref TaskDefinition
+      ServiceName: !Ref ECSServiceName
+      SchedulingStrategy: REPLICA
+      DesiredCount: 0
+
+      ## デプロイオプション/デプロイ不具合の検出
+      DeploymentController:
+        Type: ECS
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+        #Alarms:
+        #  Enable: true
+        #  AlarmNames:
+        #       - ""
+        #  Rollback: true
+
+      # Service Connect
+      ServiceConnectConfiguration:
+        Enabled: false
+        #Namespace:
+        #Services: -> 公開ポートなし
+        #LogConfiguration:
+        #  LogDriver:
+        #  Options:
+        #  SecretOptions:
+        #    -
+        #      Name:
+        #      ValueFrom:
+
+      # ネットワーキング -> awsvpc モードの場合設定
+      #NetworkConfiguration:
+      #  AwsvpcConfiguration:
+      #    Subnets: !Ref SubnetIds
+      #    SecurityGroups: !Ref SecurityGroupIds
+      #    AssignPublicIp: ENABLED
+
+      # ロードバランシング
+      #LoadBalancers: -> 公開ポートなし
+
+      # サービスの Auto Scaling -> ApplicationAutoScaling
+
+      # タスクの配置
+      PlacementStrategies:
+        -
+          Type: spread  # binpack | random | spread
+          Field: attribute:ecs.availability-zone
+        -
+          Type: spread
+          Field: instanceId
+      PlacementConstraints:
+        -
+          Type: distinctInstance  # distinctInstance | memberOf
+          #Expression:
+
+      # タグ
+      EnableECSManagedTags: true
+      PropagateTags: TASK_DEFINITION
+      #Tags:
+      #  -
+      #    Key:
+      #    Value:

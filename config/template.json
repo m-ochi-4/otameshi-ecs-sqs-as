@@ -1,0 +1,18 @@
+{
+    "Parameters": {
+        "ECSTaskDefinitionFamily": "otameshi_sqs_consumer",
+        "RoleName": "otameshi_sqs_consumer",
+        "ECRImageName": "otameshi_sqs_consumer",
+        "ECRImageTag": "latest",
+        "DynamoDBTableName": "otameshi-as-sqs-ecs",
+        "SQSQueueName": "otameshi-as-sqs-ecs",
+        "ECSClusterName": "otameshi_sqs_consumer_cluster",
+        "ECSClusterServiceConnectNamespace": "otameshi_sqs_consumer_ns",
+        "ECSServiceName": "otameshi_sqs_consumer_service",
+        "SubnetIds": "",
+        "SecurityGroupIds": "",
+        "MinCapacity": "1",
+        "MaxCapacity": "4",
+        "ExpectedMsgCapacityPerTask": "10"
+    }
+}
