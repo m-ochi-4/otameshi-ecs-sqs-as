@@ -153,7 +153,7 @@ python ./script/producer.py
 
 ECS タスクと EC2 インスタンスの停止, ECR レポジトリのコンテナイメージを削除後, 各 CFn スタックを削除してください.
 
-不要な料金を発生させないため, 次の出力を削除してください。
+不要な料金を発生させないため, 次の出力を削除してください.
 
 - CloudWatch Logs ロググループ
   - /ecs/otameshi_sqs_consumer/otameshi_sqs_consumer
